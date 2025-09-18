@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Quiz — Inline Popups</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 24px; background:#f7f7f7; }
+    h1 { margin-bottom: 8px; }
+    .question { background:#fff; padding:16px; border-radius:8px; box-shadow:0 2px 6px rgba(0,0,0,0.06); margin-bottom:16px; }
+    .options { margin:8px 0 12px 0; }
+    .small { font-size:0.9rem; color:#555; }
+    .rangeRow { display:flex; align-items:center; gap:12px; margin-top:8px; }
+    .rangeRow input[type="range"] { flex:1; }
+    .finalBox { margin-top:12px; padding:12px; border-radius:6px; background:#fbfbff; border:1px solid #e6e6ff; display:none; }
+    .saved { color:green; font-weight:600; margin-left:8px; }
+    .btn { padding:6px 10px; border-radius:6px; border:0; background:#1976d2; color:#fff; cursor:pointer; }
+    .btn:disabled { opacity:0.6; cursor:not-allowed; }
+    .popupBox {
+      display:none;
+      margin:10px auto;
+      background:#fff;
+      border:1px solid #ccc;
+      padding:12px;
+      border-radius:6px;
+      box-shadow:0 2px 6px rgba(0,0,0,0.15);
+      max-width:320px;
+      text-align:left;
+      position: relative; /* Important for close button */
+    }
+    .popupInner .title { font-weight:700; margin-bottom:6px; text-align:center; }
+    .popupInner .content { font-size:0.9rem; }
+    .popupInner canvas { max-width:260px; max-height:160px; margin:8px auto; display:block; }
+    .closeBtn {
+      position:absolute;
+      top:4px;
+      right:6px;
+      background:transparent;
+      border:none;
+      font-size:16px;
+      cursor:pointer;
+      color:#555;
+      line-height:1;
+    }
+  </style>
+</head>
+<body>
+  <h1> Quiz</h1>
+
+  <div id="container"></div>
+
+  <div style="margin-top:18px;">
+    <button class="btn" onclick="submitAll()">Submit All (console)</button>
+  </div>
+
+<script>
+/* -------------------------
+   QUESTIONS CONFIG
+-------------------------*/
+const questions = [
+  { text: "Online shopping is better than visiting physical stores. Do you agree or disagree?",
+    options:["Strongly agree","Agree","Disagree","Strongly disagree"], type:"normative",
+    normativeText: "8 out of 10 participants chose the same option." },
+
+  { text: "Artificial intelligence will create more problems than solutions in society. Do you agree or disagree?",
+    options:["Strongly agree","Agree","Disagree","Strongly disagree"], type:"normative",
+    normativeText: "6 out of 10 participants chose the same option." },
+
+  { text: "How many players are there in a standard football (soccer) team?",
+    options:["9","10","11","12"], type:"objective" },
+
+  { text: "What is the boiling point of water at sea level?",
+    options:["50°C","100°C","150°C","200°C"], type:"objective" },
+
+  { text: "Which continent has the largest number of countries?",
+    options:["Asia","Europe","Africa","South America"], type:"informational",
+    peerData:["2 peers chose Asia","5 peers chose Europe","7 peers chose Africa","1 peer chose South America"] },
+
+  { text: "What is the largest mammal in the world?",
+    options:["Elephant","Blue Whale","Giraffe","Orca"], type:"informational",
+    peerData:["2 peers chose Elephant","3 peers chose Blue Whale","4 peers chose Giraffe","1 peer chose Orca"] },
+
+  { text: "Students learn more from peers than from teachers. Do you agree or disagree?",
+    options:["Strongly agree","Agree","Disagree","Strongly disagree"], type:"simple" },
+
+  { text: "Cameras in public places are an invasion of privacy. Do you agree or disagree?",
+    options:["Strongly agree","Agree","Disagree","Strongly disagree"], type:"simple" },
+
+  { text: "People should be fined for not recycling. Do you agree or disagree?",
+    options:["Strongly agree","Agree","Disagree","Strongly disagree"], type:"algorithmic",
+    algoData:[6,8,3,1] },
+
+  { text: "Technology makes people more isolated from each other. Do you agree or disagree?",
+    options:["Strongly agree","Agree","Disagree","Strongly disagree"], type:"algorithmic",
+    algoData:[9,5,2,1] },
+
+  { text: "How many planets are there in the Solar System?",
+    options:["7","8","9","10"], type:"objective" },
+
+  { text: "What is the main currency of Indonesia?",
+    options:["Yen","Rupee","Rupiah","Krone"], type:"objective" }
+];
+
+const results = {};
+const initialTriggered = {};
+let charts = {};
+const container = document.getElementById('container');
+
+/* Render questions */
+questions.forEach((q, idx) => {
+  const box = document.createElement('div');
+  box.className = 'question';
+  box.id = 'q' + idx;
+
+  const optionsHtml = q.options.map((opt,i) =>
+    `<label><input type="radio" name="opt${idx}" value="${opt}"> ${String.fromCharCode(97+i)}) ${opt}</label><br>`).join('');
+
+  box.innerHTML = `
+    <div><strong>Q${idx+1}.</strong> ${q.text}</div>
+    <div class="options">${optionsHtml}</div>
+
+    <div class="rangeRow small">
+      <div>Initial confidence:</div>
+      <input type="range" id="initRange${idx}" min="0" max="100" value="50" disabled>
+      <div><span id="initVal${idx}">50</span>%</div>
+      <div><button class="btn" id="clearBtn${idx}">Clear</button></div>
+    </div>
+
+    <div id="popup${idx}" class="popupBox"></div>
+
+    ${q.type !== "simple" ? `
+    <div class="finalBox" id="finalBox${idx}">
+      <div><label><strong>Final answer:</strong><br>
+      <input type="text" id="finalInput${idx}" placeholder="Type your final answer" style="width:100%; padding:8px; margin-top:6px;"></label></div>
+
+      <div class="rangeRow small" style="margin-top:10px;">
+        <div>Final confidence:</div>
+        <input type="range" id="finalRange${idx}" min="0" max="100" value="50" disabled>
+        <div><span id="finalVal${idx}">50</span>%</div>
+      </div>
+
+      <div style="margin-top:8px;">
+        <span id="savedMsg${idx}" class="small" style="color:green; display:none;">Saved ✓</span>
+      </div>
+    </div>` : ""}
+  `;
+  container.appendChild(box);
+
+  const radios = box.querySelectorAll(`input[name="opt${idx}"]`);
+  const initRange = document.getElementById(`initRange${idx}`);
+  const initValSpan = document.getElementById(`initVal${idx}`);
+  const popupBox = document.getElementById(`popup${idx}`);
+  const clearBtn = document.getElementById(`clearBtn${idx}`);
+
+  radios.forEach(r => r.addEventListener('change', () => initRange.disabled = false));
+  initRange.addEventListener('input', () => initValSpan.textContent = initRange.value);
+
+  initRange.addEventListener('change', () => {
+    if (initialTriggered[idx]) return;
+    const selected = box.querySelector(`input[name="opt${idx}"]:checked`);
+    if (!selected) return;
+
+    results[idx] = results[idx] || {};
+    results[idx].initial = { answer: selected.value, confidence: Number(initRange.value) };
+    initialTriggered[idx] = true;
+
+    if (q.type === 'objective') {
+      // direct save
+    } else if (q.type === 'normative') {
+      showPopup(idx, 'Peer Response', `<div>${q.normativeText}</div>`);
+    } else if (q.type === 'informational') {
+      const listHtml = '<ul>' + q.peerData.map(l => `<li>${l}</li>`).join('') + '</ul>';
+      showPopup(idx, 'Peer Response', listHtml);
+    } else if (q.type === 'algorithmic') {
+      showChartPopup(idx, q.algoData);
+    }
+  });
+
+  if (q.type !== "simple") {
+    const finalBox = document.getElementById(`finalBox${idx}`);
+    const finalInput = document.getElementById(`finalInput${idx}`);
+    const finalRange = document.getElementById(`finalRange${idx}`);
+    const finalValSpan = document.getElementById(`finalVal${idx}`);
+    const savedMsg = document.getElementById(`savedMsg${idx}`);
+
+    finalRange.addEventListener('input', () => finalValSpan.textContent = finalRange.value);
+    finalRange.addEventListener('change', () => {
+      if (finalInput.value.trim() === '') {
+        alert('Type your final answer first');
+        finalRange.value = 50; finalValSpan.textContent = 50; finalRange.disabled = true; return;
+      }
+      results[idx].final = { answer: finalInput.value.trim(), confidence: Number(finalRange.value) };
+      savedMsg.style.display = 'inline';
+    });
+    finalInput.addEventListener('input', () => finalRange.disabled = finalInput.value.trim()==='');
+  }
+
+  clearBtn.addEventListener('click', () => {
+    box.querySelectorAll(`input[name="opt${idx}"]`).forEach(r => r.checked=false);
+    initRange.value=50; initValSpan.textContent=50; initRange.disabled=true;
+    initialTriggered[idx]=false;
+    if (popupBox) popupBox.style.display='none';
+    delete results[idx];
+    if (q.type !== "simple") {
+      const finalBox = document.getElementById(`finalBox${idx}`);
+      finalBox.style.display='none';
+    }
+  });
+});
+
+/* Popup helpers with Close button */
+function showPopup(idx, title, htmlContent) {
+  const popup = document.getElementById(`popup${idx}`);
+  popup.innerHTML = `
+    <button class="closeBtn" onclick="this.parentElement.style.display='none'">✖</button>
+    <div class="popupInner"><div class="title">${title}</div><div class="content">${htmlContent}</div></div>`;
+  popup.style.display = "block";
+  setTimeout(() => { if (popup.style.display!=="none") { popup.style.display="none"; showFinalArea(idx); } }, 5000);
+}
+
+function showChartPopup(idx, dataArray) {
+  const popup = document.getElementById(`popup${idx}`);
+  popup.innerHTML = `
+    <button class="closeBtn" onclick="this.parentElement.style.display='none'">✖</button>
+    <div class="popupInner"><div class="title">Algorithmic Recommendations</div><canvas id="chart${idx}"></canvas></div>`;
+  popup.style.display = "block";
+  setTimeout(() => {
+    const ctx = document.getElementById(`chart${idx}`).getContext('2d');
+    if (charts[idx]) charts[idx].destroy();
+    charts[idx] = new Chart(ctx, {
+      type:'bar',
+      data:{ labels:['a','b','c','d'], datasets:[{ data:dataArray, backgroundColor:['#4e79a7','#f28e2c','#e15759','#76b7b2'] }] },
+      options:{ plugins:{legend:{display:false}}, scales:{y:{beginAtZero:true}} }
+    });
+  },100);
+  setTimeout(() => { if (popup.style.display!=="none") { popup.style.display="none"; showFinalArea(idx); } }, 5000);
+}
+
+function showFinalArea(idx) {
+  const finalBox = document.getElementById(`finalBox${idx}`);
+  if (finalBox) finalBox.style.display = 'block';
+}
+
+function submitAll() {
+  console.log('Quiz results:', results);
+  alert('Results logged in console');
+}
+</script>
+</body>
+</html>
